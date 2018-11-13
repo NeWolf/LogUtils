@@ -3,7 +3,7 @@ apply plugin: 'kotlin-android'
 
 apply plugin: 'com.github.dcendents.android-maven'
 
-group = 'com.github.newsolf'
+group = 'com.github.NeWolf'
 android {
     compileSdkVersion configs.compileSdkVersion
 
