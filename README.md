@@ -27,7 +27,7 @@ Step 2. Add the dependency
 	```
 
 Step 3. Set Application
-    ```
+```
     @Override
     public void onCreate() {
         super.onCreate();
