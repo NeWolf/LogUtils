@@ -2,8 +2,10 @@ package com.newolf.logutilslib
 
 import android.content.ClipData
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.support.annotation.IntRange
 import android.support.annotation.RequiresApi
 import android.support.v4.util.SimpleArrayMap
@@ -11,15 +13,13 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
-import java.io.File
-import java.io.PrintWriter
-import java.io.StringReader
-import java.io.StringWriter
+import java.io.*
 import java.lang.annotation.Retention
 import java.lang.annotation.RetentionPolicy
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.Type
 import java.net.UnknownHostException
+import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executors
@@ -192,10 +192,10 @@ object NLogUtls {
         val tagHead = processTagAndHead(tag)
         val body = processBody(type_high, *contents)
         if (CONFIG.mLog2ConsoleSwitch && type_low >= CONFIG.mConsoleFilter && type_high != FILE) {
-//            print2Console(type_low, tagHead.tag, tagHead.consoleHead, body)
+            print2Console(type_low, tagHead.tag, tagHead.consoleHead, body)
         }
         if ((CONFIG.mLog2FileSwitch || type_high == FILE) && type_low >= CONFIG.mFileFilter) {
-//            print2File(type_low, tagHead.tag, tagHead.fileHead + body)
+            print2File(type_low, tagHead.tag, tagHead.fileHead + body)
         }
     }
 
@@ -295,10 +295,268 @@ object NLogUtls {
         return if (body.length == 0) NOTHING else body
     }
 
+
+    private fun print2Console(
+        type: Int,
+        tag: String?,
+        head: Array<String?>?,
+        msg: String
+    ) {
+        if (CONFIG.mSingleTagSwitch) {
+            printSingleTagMsg(type, tag, processSingleTagMsg(type, tag, head, msg))
+        } else {
+            printBorder(type, tag, true)
+            printHead(type, tag, head)
+            printMsg(type, tag, msg)
+            printBorder(type, tag, false)
+        }
+    }
+
+    private fun print2File(type: Int, tag: String?, msg: String?) {
+        val now = Date(System.currentTimeMillis())
+        val format = FORMAT.format(now)
+        val date = format.substring(0, 10)
+        val time = format.substring(11)
+        val fullPath = ((if (CONFIG.mDir == null) CONFIG.mDefaultDir else CONFIG.mDir)
+                + CONFIG.mFilePrefix + "-" + date + ".txt")
+        if (!createOrExistsFile(fullPath)) {
+            Log.e("LogUtils", "create $fullPath failed!")
+            return
+        }
+        val sb = StringBuilder()
+        sb.append(time)
+            .append(T[type - V])
+            .append("/")
+            .append(tag)
+            .append(msg)
+            .append(LINE_SEP)
+        val content = sb.toString()
+        input2File(content, fullPath)
+    }
+
+    private fun input2File(input: String, filePath: String) {
+        EXECUTOR.execute {
+            var bw: BufferedWriter? = null
+            try {
+                bw = BufferedWriter(FileWriter(filePath, true))
+                bw.write(input)
+            } catch (e: IOException) {
+                e.printStackTrace()
+                Log.e("LogUtils", "log to $filePath failed!")
+            } finally {
+                try {
+                    bw?.close()
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                }
+
+            }
+        }
+    }
+
+
+    private fun printSingleTagMsg(type: Int, tag: String?, msg: String?) {
+        val len = msg?.length
+        val countOfSub = len!! / MAX_LEN
+        if (countOfSub > 0) {
+            if (CONFIG.mLogBorderSwitch) {
+                Log.println(type, tag, msg.substring(0, MAX_LEN) + LINE_SEP + BOTTOM_BORDER)
+                var index = MAX_LEN
+                for (i in 1 until countOfSub) {
+                    Log.println(
+                        type, tag, PLACEHOLDER + LINE_SEP + TOP_BORDER + LINE_SEP
+                                + LEFT_BORDER + msg.substring(index, index + MAX_LEN)
+                                + LINE_SEP + BOTTOM_BORDER
+                    )
+                    index += MAX_LEN
+                }
+                if (index != len) {
+                    Log.println(
+                        type, tag, PLACEHOLDER + LINE_SEP + TOP_BORDER + LINE_SEP
+                                + LEFT_BORDER + msg.substring(index, len)
+                    )
+                }
+            } else {
+                Log.println(type, tag, msg.substring(0, MAX_LEN))
+                var index = MAX_LEN
+                for (i in 1 until countOfSub) {
+                    Log.println(
+                        type, tag,
+                        PLACEHOLDER + LINE_SEP + msg.substring(index, index + MAX_LEN)
+                    )
+                    index += MAX_LEN
+                }
+                if (index != len) {
+                    Log.println(type, tag, PLACEHOLDER + LINE_SEP + msg.substring(index, len))
+                }
+            }
+        } else {
+            Log.println(type, tag, msg)
+        }
+    }
+
+    private fun processSingleTagMsg(
+        type: Int,
+        tag: String?,
+        head: Array<String?>?,
+        msg: String
+    ): String {
+        val sb = StringBuilder()
+        sb.append(PLACEHOLDER).append(LINE_SEP)
+        if (CONFIG.mLogBorderSwitch) {
+            sb.append(TOP_BORDER).append(LINE_SEP)
+            if (head != null) {
+                for (aHead in head) {
+                    sb.append(LEFT_BORDER).append(aHead).append(LINE_SEP)
+                }
+                sb.append(MIDDLE_BORDER).append(LINE_SEP)
+            }
+            for (line in msg.split(LINE_SEP.toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()) {
+                sb.append(LEFT_BORDER).append(line).append(LINE_SEP)
+            }
+            sb.append(BOTTOM_BORDER)
+        } else {
+            if (head != null) {
+                for (aHead in head) {
+                    sb.append(aHead).append(LINE_SEP)
+                }
+            }
+            sb.append(msg)
+        }
+        return sb.toString()
+    }
+
+
+    private fun printBorder(type: Int, tag: String?, isTop: Boolean) {
+        if (CONFIG.mLogBorderSwitch) {
+            Log.println(type, tag, if (isTop) TOP_BORDER else BOTTOM_BORDER)
+        }
+    }
+
+    private fun printHead(type: Int, tag: String?, head: Array<String?>?) {
+        if (head != null) {
+            for (aHead in head) {
+                Log.println(type, tag, if (CONFIG.mLogBorderSwitch) LEFT_BORDER + aHead else aHead)
+            }
+            if (CONFIG.mLogBorderSwitch) Log.println(type, tag, MIDDLE_BORDER)
+        }
+    }
+
+    private fun printMsg(type: Int, tag: String?, msg: String) {
+        val len = msg.length
+        val countOfSub = len / MAX_LEN
+        if (countOfSub > 0) {
+            var index = 0
+            for (i in 0 until countOfSub) {
+                printSubMsg(type, tag, msg.substring(index, index + MAX_LEN))
+                index += MAX_LEN
+            }
+            if (index != len) {
+                printSubMsg(type, tag, msg.substring(index, len))
+            }
+        } else {
+            printSubMsg(type, tag, msg)
+        }
+    }
+
+
+    private fun printSubMsg(type: Int, tag: String?, msg: String?) {
+        if (!CONFIG.mLogBorderSwitch) {
+            Log.println(type, tag, msg)
+            return
+        }
+        val sb = StringBuilder()
+        val lines = msg?.split(LINE_SEP.toRegex())?.dropLastWhile { it.isEmpty() }?.toTypedArray()
+        for (line in lines!!) {
+            Log.println(type, tag, LEFT_BORDER + line)
+        }
+    }
+
     private fun formatObject(type: Int, any: Any?): String {
         if (any == null) return NULL
         if (type == JSON) return LogFormatter.formatJson(any.toString())
         return if (type == XML) LogFormatter.formatXml(any.toString()) else formatObject(any)
+    }
+
+
+    private fun createOrExistsFile(filePath: String): Boolean {
+        val file = File(filePath)
+        if (file.exists()) return file.isFile
+        if (!createOrExistsDir(file.parentFile)) return false
+        try {
+            deleteDueLogs(filePath)
+            val isCreate = file.createNewFile()
+            if (isCreate) {
+                printDeviceInfo(filePath)
+            }
+            return isCreate
+        } catch (e: IOException) {
+            e.printStackTrace()
+            return false
+        }
+
+    }
+
+    private fun deleteDueLogs(filePath: String) {
+        val file = File(filePath)
+        val parentFile = file.parentFile
+        val files =
+            parentFile.listFiles { dir, name -> name.matches(("^" + CONFIG.mFilePrefix + "-[0-9]{4}-[0-9]{2}-[0-9]{2}.txt$").toRegex()) }
+        if (files!!.size <= 0) return
+        val length = filePath.length
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        try {
+            val curDay = filePath.substring(length - 14, length - 4)
+            val dueMillis = sdf.parse(curDay).time - CONFIG.mSaveDays * 86400000L
+            for (aFile in files) {
+                val name = aFile.name
+                val l = name.length
+                val logDay = name.substring(l - 14, l - 4)
+                if (sdf.parse(logDay).time <= dueMillis) {
+                    EXECUTOR.execute {
+                        val delete = aFile.delete()
+                        if (!delete) {
+                            Log.e("LogUtils", "delete $aFile failed!")
+                        }
+                    }
+                }
+            }
+        } catch (e: ParseException) {
+            e.printStackTrace()
+        }
+
+    }
+
+    private fun printDeviceInfo(filePath: String) {
+        var versionName = ""
+        var versionCode = 0
+        try {
+            val pi = Utils.getApp()
+                .packageManager
+                .getPackageInfo(Utils.getApp().packageName, 0)
+            if (pi != null) {
+                versionName = pi.versionName
+                versionCode = pi.versionCode
+            }
+        } catch (e: PackageManager.NameNotFoundException) {
+            e.printStackTrace()
+        }
+
+        val time = filePath.substring(filePath.length - 14, filePath.length - 4)
+        val head = "************* Log Head ****************" +
+                "\nDate of Log        : " + time +
+                "\nDevice Manufacturer: " + Build.MANUFACTURER +
+                "\nDevice Model       : " + Build.MODEL +
+                "\nAndroid Version    : " + Build.VERSION.RELEASE +
+                "\nAndroid SDK        : " + Build.VERSION.SDK_INT +
+                "\nApp VersionName    : " + versionName +
+                "\nApp VersionCode    : " + versionCode +
+                "\n************* Log Head ****************\n\n"
+        input2File(head, filePath)
+    }
+
+    private fun createOrExistsDir(file: File?): Boolean {
+        return file != null && if (file.exists()) file.isDirectory else file.mkdirs()
     }
 
     private fun formatObject(any: Any?): String {
@@ -334,7 +592,6 @@ object NLogUtls {
     }
 
 
-
     internal fun isSpace(s: String?): Boolean {
         if (s == null) return true
         var i = 0
@@ -361,7 +618,7 @@ object NLogUtls {
 
     class DefalutFormat : IFormatter<String>() {
         override fun format(t: String): String {
-           return t
+            return t
         }
 
     }
@@ -370,7 +627,7 @@ object NLogUtls {
     class Config internal constructor() {
         var mDefaultDir: String? = null// The default storage directory of log.
         var mDir: String? = null       // The storage directory of log.
-        private var mFilePrefix = "util"// The file prefix of log.
+         var mFilePrefix = "util"// The file prefix of log.
         var mLogSwitch = true  // The switch of log.
         var mLog2ConsoleSwitch = true  // The logcat's switch of log.
         var mGlobalTag: String? = null  // The global tag of log.
@@ -386,7 +643,15 @@ object NLogUtls {
         var mSaveDays = -1    // The save days of log.
 
         init {
+            if (mDefaultDir == null) {
 
+
+                if (Environment.MEDIA_MOUNTED == Environment.getExternalStorageState() && Utils.getApp().getExternalCacheDir() != null)
+                    mDefaultDir = Utils.getApp().getExternalCacheDir().toString() + FILE_SEP + "log" + FILE_SEP
+                else {
+                    mDefaultDir = Utils.getApp().getCacheDir().toString() + FILE_SEP + "log" + FILE_SEP
+                }
+            }
         }
 
         fun setLogSwitch(logSwitch: Boolean): Config {
@@ -489,7 +754,7 @@ object NLogUtls {
     }
 
 
-    private object LogFormatter  {
+    private object LogFormatter {
         internal fun formatJson(json: String): String {
             var json = json
             try {
