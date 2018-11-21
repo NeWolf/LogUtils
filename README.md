@@ -24,6 +24,12 @@ Step 2. Add the dependency
 	dependencies {
 	        implementation 'com.github.NeWolf:LogUtils:2.0.0'
 	}
+```
+	delete Test
+```
+	dependencies {
+	        implementation 'com.github.NeWolf:LogUtils:2.0.1'
+	}
 	```
 
 Step 3. Set Application
